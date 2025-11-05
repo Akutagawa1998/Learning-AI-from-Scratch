@@ -1,4 +1,4 @@
-# Learning AI from Scracth
+# LLM from Scracth
 
 Recap and learn new shit = =
 
