@@ -1,7 +1,6 @@
 # LLM from Scracth
+Recap and learn AI from Scratch
 
-Recap and learn new shit = =
 
-
-Start Date:
-2025-10-21
+|#|Topic|Date|
+|Day 1|Create repo, conda, and standard delivery process|Dec 20 2025|
