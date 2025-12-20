@@ -1,0 +1,13 @@
+run:
+  name: "baseline"
+  seed: 42
+  results_dir: "results"
+
+train:
+  epochs: 1
+  batch_size: 64
+  lr: 0.001
+
+system:
+  device: "auto"   # auto | cpu | cuda
+  num_workers: 2
