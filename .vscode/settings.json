@@ -1,0 +1,21 @@
+{
+  "editor.accessibilitySupport": "off",
+  "problems.decorations.enabled": true,
+  "problems.showCurrentInStatus": false,
+  "accessibility.signals.lineHasError": {
+    "sound": "off"
+  },
+  "accessibility.signals.lineHasWarning": {
+    "sound": "off"
+  },
+  "accessibility.signals.lineHasFoldedArea": {
+    "sound": "off"
+  },
+  "accessibility.signals.lineHasBreakpoint": {
+    "sound": "off"
+  },
+  "accessibility.signals.lineHasInlineSuggestion": {
+    "sound": "off"
+  }
+}
+
