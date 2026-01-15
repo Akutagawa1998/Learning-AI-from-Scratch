@@ -1,0 +1,13 @@
+run:
+  name: "linear_mnist"
+  seed: 42
+  results_dir: "results"
+
+train:
+  epochs: 1
+  batch_size: 128
+  lr: 0.1
+
+system:
+  device: "mps"
+  num_workers: 2

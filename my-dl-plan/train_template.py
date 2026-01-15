@@ -11,7 +11,6 @@ import platform
 # sys is a module for getting the system information
 import sys
 # time is a module for getting the time
-from tarfile import LinkFallbackError
 import time 
 # dataclasses is a module for creating data classes
 from dataclasses import dataclass
@@ -19,11 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 # typing is a module for type hints
 from typing import Any, Dict
-
-import src.data.mnist as mnist
-from src.models import LinearMNIST
-
-import csv
 
 # yaml is a module for parsing YAML files
 import yaml
@@ -33,6 +27,8 @@ try:
 except ImportError as e:
     torch = None
     _torch_import_error = e
+
+from src.data.mnist import MNISTDataConfig, build_mnist_dataloaders
 
 
 # @dataclass是装饰器，用于创建数据类，自动生成__init__方法、__repr__方法、__eq__方法等
@@ -52,7 +48,7 @@ class TrainConfig:
 
 @dataclass
 class SystemConfig:
-    device: str  # auto|cpu|cuda
+    device: str  # auto|cpu|cuda|mps
     num_workers: int
 
 
@@ -127,22 +123,26 @@ def pick_device(device_cfg: str) -> str:
     # 如果device_cfg为"cpu"，则返回"cpu"
     if device_cfg == "cpu":
         return "cpu"
-    # 如果device_cfg为"mps"，则返回"mps"
-    if device_cfg == "mps":
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("Config requested MPS but torch.backends.mps.is_available() is False")
-        return "mps"    
     # 如果device_cfg为"cuda"，则返回"cuda"
     if device_cfg == "cuda":
         # 如果torch.cuda.is_available()为False，则抛出RuntimeError异常
         if not torch.cuda.is_available():
             raise RuntimeError("Config requested CUDA but torch.cuda.is_available() is False")
         return "cuda"
+    # 如果device_cfg为"mps"，则返回"mps"
+    if device_cfg == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("Config requested MPS but torch.backends.mps.is_available() is False")
+        return "mps"
     # 如果device_cfg为"auto"，则返回"cuda" if torch.cuda.is_available() else "cpu"
     if device_cfg == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
     # 如果device_cfg为其他值，则抛出ValueError异常
-    raise ValueError(f"Unknown system.device='{device_cfg}'. Use auto|cpu|cuda")
+    raise ValueError(f"Unknown system.device='{device_cfg}'. Use auto|cpu|cuda|mps")
 
 
 def set_seed(seed: int) -> None:
@@ -172,53 +172,11 @@ def print_system_info() -> None:
         return
     print(f"PyTorch: {torch.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
-    if torch.backends.mps.is_available():
-        print(f"MPS available: {torch.backends.mps.is_available()}")
     if torch.cuda.is_available():
         print(f"CUDA device count: {torch.cuda.device_count()}")
         print(f"CUDA device 0: {torch.cuda.get_device_name(0)}")
     print("===================")
 
-def train_one_epoch(model, loader, criterion, optimizer, device) -> float:
-    # set the model to training mode
-    model.train()
-    # initialize the total loss
-    total_loss = 0.0
-    for x, y in loader:
-        x = x.to(device)
-        y = y.to(device)
-        # forward pass， 单层， logits就是model(x)的输出
-        logits = model(x)
-        # loss function
-        loss = criterion(logits, y)
-        # zero the gradient
-        optimizer.zero_grad()
-        # backward pass
-        loss.backward()
-        # update the parameters
-        optimizer.step()
-        total_loss += loss.item()
-    # return the average loss
-    return total_loss / len(loader)
-
-@torch.no_grad()
-def evaluation(model, loader, device) -> float:
-    # set the model to evaluation mode
-    model.eval()
-    # initialize the total loss
-    correct = 0
-    total = 0
-
-    for x, y in loader:
-        x = x.to(device)
-        y = y.to(device)
-        logits = model(x)
-        # get the predicted class, argmax returns the index of the maximum value
-        preds = logits.argmax(dim=1)
-        correct += (preds == y).sum().item()
-        total += y.size(0)
-
-    return correct / total
 
 # 主函数    
 def main() -> None:
@@ -237,36 +195,15 @@ def main() -> None:
     set_seed(cfg.run.seed)
     # 确保运行目录
     run_dir = ensure_run_dir(cfg.run.results_dir, cfg.run.name)
+    _ = run_dir
 
-    # data_cfg = mnist.MNISTDataConfig(
-    #     data_dir=cfg.run.results_dir,
-    #     batch_size=cfg.train.batch_size,
-    #     num_workers=cfg.system.num_workers,
-    #     seed=cfg.run.seed,
-    #     normalize="mnist",
-    #     flatten=False,
-    #     print_batch_stats=True,
-    # )
-
-    train_loader, val_loader, meta = mnist.build_mnist_dataloaders(cfg)
-    model = LinearMNIST().to(device)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=cfg.train.lr)
-
-    metrics_dir = Path(cfg.run.results_dir) / "week01"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path = metrics_dir / "metrics.csv"
-    with open(metrics_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["epoch", "train_loss", "val_acc"])
-
-    for epoch in range(cfg.train.epochs):
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_acc = evaluation(model, val_loader, device)
-        print(f"Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Val Acc: {val_acc:.4f}")
-        # save the model
-        torch.save(model.state_dict(), run_dir / f"model_{epoch+1}.pth")
-
+    data_cfg = MNISTDataConfig(
+        batch_size=cfg.train.batch_size,
+        num_workers=cfg.system.num_workers,
+        seed=cfg.run.seed,
+        print_batch_stats=True,
+    )
+    build_mnist_dataloaders(data_cfg)
 
 if __name__ == "__main__":
     main()
