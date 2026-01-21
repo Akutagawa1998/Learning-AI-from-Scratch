@@ -36,6 +36,7 @@ Learning-AI-from-Scratch/
 │   ├── configs/             # 配置文件目录
 │   │   └── baseline.yaml    # 基线配置文件
 │   ├── src/                 # 源代码目录
+<<<<<<< Updated upstream
 │   │   ├── data/            # 数据处理模块
 │   │   │   └── mnist.py     # MNIST 数据加载器
 │   │   ├── models/          # 模型定义（待完善）
@@ -49,8 +50,14 @@ Learning-AI-from-Scratch/
 │   │       ├── metrics.csv  # 指标记录
 │   │       ├── plots/       # 图表
 │   │       └── notes.md     # 实验笔记
+=======
+│   │   ├── models/          # 模型定义
+│   │   └── data/            # 数据处理模块
+│   │       └── mnist.py     # MNIST 数据加载器
+>>>>>>> Stashed changes
 │   ├── notes/               # 笔记目录
-│   │   └── env.md           # 环境配置笔记
+│   │   ├── env.md           # 环境配置笔记
+│   │   └── day3.md          # Day 3 训练笔记
 │   ├── requirements.txt     # Python 依赖包
 │   ├── train.py             # 主训练脚本
 │   └── REPRODUCE.md         # 复现指南（待完善）
@@ -96,7 +103,11 @@ venv\Scripts\activate  # Windows
 
 ```bash
 cd my-dl-plan
-pip install -r requirements.txt
+# Apple (macOS / Apple Silicon)
+pip install -r requirements-apple.txt
+
+# CUDA (Linux + NVIDIA GPU)
+pip install -r requirements-cuda.txt
 ```
 
 ### 4. 运行训练
@@ -108,6 +119,7 @@ cd my-dl-plan
 python train.py --config configs/baseline.yaml
 ```
 
+<<<<<<< Updated upstream
 #### 多卡训练（Week 2+）
 
 使用 Slurm 提交（示例）：
@@ -123,6 +135,16 @@ torchrun --nproc_per_node=4 train.py --config configs/mnist_ddp.yaml
 ```
 
 ## 📝 配置文件说明
+=======
+### Day 3 线性模型（Softmax Regression）
+
+```bash
+cd my-dl-plan
+python train.py --config configs/linear_mnist.yaml
+```
+
+### 配置文件说明
+>>>>>>> Stashed changes
 
 配置文件采用 YAML 格式，包含三个主要部分：
 
@@ -219,6 +241,7 @@ export NCCL_DEBUG=WARN
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export OMP_NUM_THREADS=8
 
+<<<<<<< Updated upstream
 python -m torch.distributed.run --nproc_per_node=4 \
   train.py --config configs/mnist_ddp.yaml
 ```
@@ -231,6 +254,11 @@ python -m torch.distributed.run --nproc_per_node=4 \
 4. **短作业 + 次日验收**：每天2小时用于准备、提交、诊断、写结论
 
 ## ⚠️ 注意事项
+=======
+Day 3 会额外写入 `results/week01/metrics.csv`，包含每个 epoch 的 `train_loss` 与 `val_acc`。
+
+## 注意事项
+>>>>>>> Stashed changes
 
 1. 首次运行时会自动下载 MNIST 数据集
 2. 如果使用 GPU，确保已正确安装 CUDA 和 cuDNN

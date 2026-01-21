@@ -3,3 +3,4 @@ from .linear import LinearMNIST
 
 __all__ = ['LinearMNIST']
 
+
