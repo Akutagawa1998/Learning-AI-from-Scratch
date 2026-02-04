@@ -28,8 +28,6 @@ except ImportError as e:
     torch = None
     _torch_import_error = e
 
-from src.data.mnist import MNISTDataConfig, build_mnist_dataloaders
-
 
 # @dataclass是装饰器，用于创建数据类，自动生成__init__方法、__repr__方法、__eq__方法等
 @dataclass
@@ -48,7 +46,7 @@ class TrainConfig:
 
 @dataclass
 class SystemConfig:
-    device: str  # auto|cpu|cuda|mps
+    device: str  # auto|cpu|cuda
     num_workers: int
 
 
@@ -123,26 +121,22 @@ def pick_device(device_cfg: str) -> str:
     # 如果device_cfg为"cpu"，则返回"cpu"
     if device_cfg == "cpu":
         return "cpu"
+    # 如果device_cfg为"mps"，则返回"mps"
+    if device_cfg == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("Config requested MPS but torch.backends.mps.is_available() is False")
+        return "mps"    
     # 如果device_cfg为"cuda"，则返回"cuda"
     if device_cfg == "cuda":
         # 如果torch.cuda.is_available()为False，则抛出RuntimeError异常
         if not torch.cuda.is_available():
             raise RuntimeError("Config requested CUDA but torch.cuda.is_available() is False")
         return "cuda"
-    # 如果device_cfg为"mps"，则返回"mps"
-    if device_cfg == "mps":
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("Config requested MPS but torch.backends.mps.is_available() is False")
-        return "mps"
     # 如果device_cfg为"auto"，则返回"cuda" if torch.cuda.is_available() else "cpu"
     if device_cfg == "auto":
-        if torch.cuda.is_available():
-            return "cuda"
-        if torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+        return "cuda" if torch.cuda.is_available() else "cpu"
     # 如果device_cfg为其他值，则抛出ValueError异常
-    raise ValueError(f"Unknown system.device='{device_cfg}'. Use auto|cpu|cuda|mps")
+    raise ValueError(f"Unknown system.device='{device_cfg}'. Use auto|cpu|cuda")
 
 
 def set_seed(seed: int) -> None:
@@ -172,6 +166,10 @@ def print_system_info() -> None:
         return
     print(f"PyTorch: {torch.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.backends.mps.is_available():
+        print(f"MPS available: {torch.backends.mps.is_available()}")
+        print(f"MPS device count: {torch.backends.mps.device_count()}")
+        print(f"MPS device 0: {torch.backends.mps.get_device_name(0)}")
     if torch.cuda.is_available():
         print(f"CUDA device count: {torch.cuda.device_count()}")
         print(f"CUDA device 0: {torch.cuda.get_device_name(0)}")
@@ -195,15 +193,6 @@ def main() -> None:
     set_seed(cfg.run.seed)
     # 确保运行目录
     run_dir = ensure_run_dir(cfg.run.results_dir, cfg.run.name)
-    _ = run_dir
-
-    data_cfg = MNISTDataConfig(
-        batch_size=cfg.train.batch_size,
-        num_workers=cfg.system.num_workers,
-        seed=cfg.run.seed,
-        print_batch_stats=True,
-    )
-    build_mnist_dataloaders(data_cfg)
 
 if __name__ == "__main__":
     main()
