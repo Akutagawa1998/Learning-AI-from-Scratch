@@ -72,7 +72,24 @@ class UnigramFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        # raise Exception("Must be implemented")
+        self.indexer = indexer
+    
+    def get_indexer(self) -> Indexer:
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        feats = Counter()
+        # bias 项：把常数 1 当作一个特征（模型的截距），对应 weights 里的一维参数
+        bias_idx = self.indexer.add_and_get_index("BIAS", add_to_indexer)
+        if bias_idx != -1:
+            feats[bias_idx] += 1
+        for word in sentence:
+            idx = self.indexer.add_and_get_index(word, add_to_indexer)
+            if idx != -1:
+                feats[idx] += 1
+        return feats
+
 
 
 class BigramFeatureExtractor(FeatureExtractor):
@@ -99,8 +116,22 @@ class LogisticRegressionClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, weights: np.ndarray, feat_extractor: FeatureExtractor):
+        # raise Exception("Must be implemented")
+        self.weights = weights
+        self.feat_extractor = feat_extractor
+
+    def predict(self, ex_words: List[str]) -> int:
+        feats = self.feat_extractor.extract_features(ex_words, add_to_indexer=False)
+        score = 0.0
+        for (idx, value) in feats.items():
+            score += self.weights[idx] * value
+        prob = 1.0 / (1.0 + np.exp(-score))
+        if prob >= 0.5:
+            return 1
+        else:
+            return 0
+
 
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
@@ -110,7 +141,81 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    raise Exception("Must be implemented")
+    # raise Exception("Must be implemented")
+    
+    
+    lr = 0.1
+    num_epochs = 10
+
+    # 先构建特征空间
+    for ex in train_exs:
+        feats = feat_extractor.extract_features(ex.words, add_to_indexer=True)
+    weights = np.zeros(len(feat_extractor.get_indexer()))
+
+    # ------------------------------------------------------------
+    # This is my maunally written code, which is slower than the numpy version.
+    # But it works.
+    # Please forgive the Chinese comments, because I want to keep it for my own reference in my blog.
+    # 旧写法（list/for 循环逐项累加/更新）：保留并注释掉，方便对照
+    # ------------------------------------------------------------
+    # # SGD：训练多轮（num_epochs），每轮 shuffle
+    # for epoch in range(num_epochs):
+    #     random.shuffle(train_exs)
+    #
+    #     # 训练模型，每一句：
+    #     for ex in train_exs:
+    #         # 用到了哪些特征(词)
+    #         feats = feat_extractor.extract_features(ex.words, add_to_indexer=False)
+    #         score = 0.0
+    #
+    #         # 对于每一个词：
+    #         for (idx, value) in feats.items():
+    #             # 计算分数： 权重 * 词频
+    #             score += weights[idx] * value
+    #
+    #         # 最终sigmoid函数得到概率
+    #         prob = 1.0 / (1.0 + np.exp(-score))
+    #         y = ex.label
+    #
+    #         # 计算梯度： (概率 - 真实标签) * 词频
+    #         # 对每个词： 更新权重
+    #         for idx, value in feats.items():
+    #             weights[idx] -= lr * (prob - y) * value
+
+    # ------------------------------------------------------------
+    # 优化写法（NumPy 稀疏向量化）：把每个样本的 (idx, value) 转成 numpy 数组
+    # - score 用 np.dot 一次算完
+    # - 更新用 weights[idxs] 一次性完成（高级索引）
+    # - 预先缓存特征，避免每个 epoch 反复 extract_features
+    # ------------------------------------------------------------
+    cached_feats = []
+    for ex in train_exs:
+        feats = feat_extractor.extract_features(ex.words, add_to_indexer=False)
+        idxs = np.fromiter(feats.keys(), dtype=np.int64)
+        vals = np.fromiter(feats.values(), dtype=np.float64)
+        cached_feats.append((idxs, vals, ex.label))
+
+    # SGD：训练多轮（num_epochs），每轮 shuffle
+    order = np.arange(len(cached_feats))
+    for epoch in range(num_epochs):
+        np.random.shuffle(order)
+
+        # 训练模型，每一句：
+        for i in order:
+            idxs, vals, y = cached_feats[i]
+
+            # 计算分数： 权重 * 词频（向量化）
+            score = float(np.dot(weights[idxs], vals))
+
+            # 最终sigmoid函数得到概率
+            # 可选数值稳定：score = np.clip(score, -20, 20)
+            prob = 1.0 / (1.0 + np.exp(-score))
+
+            # 计算梯度： (概率 - 真实标签) * 词频；对每个词： 更新权重（向量化）
+            weights[idxs] -= lr * (prob - y) * vals
+
+    # optional: compute training loss / dev accuracy for debugging
+    return LogisticRegressionClassifier(weights, feat_extractor)
 
 
 def train_linear_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
