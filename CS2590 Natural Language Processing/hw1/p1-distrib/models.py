@@ -98,7 +98,26 @@ class BigramFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+    
+    def get_indexer(self) -> Indexer:
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        feats = Counter()
+        # bias 项：把常数 1 当作一个特征（模型的截距），对应 weights 里的一维参数
+        bias_idx = self.indexer.add_and_get_index("BIAS", add_to_indexer)
+        if bias_idx != -1:
+            feats[bias_idx] += 1
+
+        for i in range(len(sentence) - 1):
+            word = sentence[i]
+            next_word = sentence[i + 1]
+            feat_name = f"{word} {next_word}"
+            idx = self.indexer.add_and_get_index(feat_name, add_to_indexer)
+            if idx != -1:
+                feats[idx] += 1
+        return feats
 
 
 class BetterFeatureExtractor(FeatureExtractor):
