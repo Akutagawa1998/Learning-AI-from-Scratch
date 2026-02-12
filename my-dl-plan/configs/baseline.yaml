@@ -9,5 +9,5 @@ train:
   lr: 0.001
 
 system:
-  device: "auto"   # auto | cpu | cuda
+  device: "auto"   # auto | cpu | cuda | mps
   num_workers: 2

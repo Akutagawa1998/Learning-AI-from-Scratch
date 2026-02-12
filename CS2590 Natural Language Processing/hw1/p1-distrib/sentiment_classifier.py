@@ -20,7 +20,7 @@ def _parse_args():
     :return: the parsed args bundle
     """
     parser = argparse.ArgumentParser(description='trainer.py')
-    parser.add_argument('--model', type=str, default='DAN', help='model to run (TRIVIAL, LR, or DAN)')
+    parser.add_argument('--model', type=str, default='DAN', help='model to run (TRIVIAL, LR, DAN, or CNN)')
     parser.add_argument('--train_path', type=str, default='data/train.txt', help='path to train set (you should not need to modify)')
     parser.add_argument('--dev_path', type=str, default='data/dev.txt', help='path to dev set (you should not need to modify)')
     parser.add_argument('--blind_test_path', type=str, default='data/test-blind.txt', help='path to blind test set (you should not need to modify)')
@@ -105,6 +105,8 @@ if __name__ == '__main__':
     start_time = time.time()
     if args.model == "DAN":
         model = train_deep_averaging_network(args, train_exs, dev_exs, word_embeddings)
+    elif args.model == "CNN":
+        model = train_text_cnn(args, train_exs, dev_exs, word_embeddings)
     elif args.model == "LR":
         model = train_linear_model(args, train_exs, dev_exs)
     else:

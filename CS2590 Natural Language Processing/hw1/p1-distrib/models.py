@@ -2,9 +2,11 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
 import numpy as np
 import random
+import sys
 from typing import List
 from sentiment_data import *
 from utils import *
@@ -113,7 +115,7 @@ class BigramFeatureExtractor(FeatureExtractor):
         for i in range(len(sentence) - 1):
             word = sentence[i]
             next_word = sentence[i + 1]
-            feat_name = f"{word} {next_word}"
+            feat_name = f"Bigram={word} {next_word}"
             idx = self.indexer.add_and_get_index(feat_name, add_to_indexer)
             if idx != -1:
                 feats[idx] += 1
@@ -126,7 +128,65 @@ class BetterFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.stopwords = {
+            "a", "an", "the", "and", "or", "but", "if", "while", "with", "of", "at",
+            "by", "for", "to", "in", "on", "from", "up", "down", "out", "over", "under",
+            "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did",
+            "have", "has", "had", "this", "that", "these", "those", "it", "its", "as",
+            "so", "than", "too", "very"
+        }
+        self.negations = {"not", "no", "never", "n't"}
+        self.negation_window = 3
+
+    def get_indexer(self) -> Indexer:
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        feats = Counter()
+        bias_idx = self.indexer.add_and_get_index("BIAS", add_to_indexer)
+        if bias_idx != -1:
+            feats[bias_idx] += 1
+
+        n = len(sentence)
+        if n <= 4:
+            len_feat = "LenBucket=short"
+        elif n <= 12:
+            len_feat = "LenBucket=medium"
+        else:
+            len_feat = "LenBucket=long"
+        len_idx = self.indexer.add_and_get_index(len_feat, add_to_indexer)
+        if len_idx != -1:
+            feats[len_idx] += 1
+
+        negate_left = 0
+        for word in sentence:
+            if word in self.negations:
+                negate_left = self.negation_window
+                neg_idx = self.indexer.add_and_get_index("HasNegation", add_to_indexer)
+                if neg_idx != -1:
+                    feats[neg_idx] += 1
+                continue
+
+            if word in self.stopwords:
+                if negate_left > 0:
+                    feat_name = f"NegUnigram={word}"
+                else:
+                    continue
+            else:
+                feat_name = f"NegUnigram={word}" if negate_left > 0 else f"Unigram={word}"
+
+            idx = self.indexer.add_and_get_index(feat_name, add_to_indexer)
+            if idx != -1:
+                feats[idx] += 1
+
+            if negate_left > 0:
+                negate_left -= 1
+
+        for idx in list(feats.keys()):
+            if feats[idx] > 2:
+                feats[idx] = 2
+        return feats
 
 
 class LogisticRegressionClassifier(SentimentClassifier):
@@ -153,7 +213,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
 
 
-def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
+def train_logistic_regression(args, train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
     """
     Train a logistic regression model.
     :param train_exs: training set, List of SentimentExample objects
@@ -162,9 +222,9 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     """
     # raise Exception("Must be implemented")
     
-    
-    lr = 0.1
-    num_epochs = 10
+    lr_passed = any(arg == "--lr" or arg.startswith("--lr=") for arg in sys.argv[1:])
+    lr = args.lr if lr_passed else 0.1
+    num_epochs = args.num_epochs
 
     # 先构建特征空间
     for ex in train_exs:
@@ -175,7 +235,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     # This is my maunally written code, which is slower than the numpy version.
     # But it works.
     # Please forgive the Chinese comments, because I want to keep it for my own reference in my blog.
-    # 旧写法（list/for 循环逐项累加/更新）：保留并注释掉，方便对照
+    # 我第一次手写的代码：for循环逐项累加/更新，比numpy版本慢。
     # ------------------------------------------------------------
     # # SGD：训练多轮（num_epochs），每轮 shuffle
     # for epoch in range(num_epochs):
@@ -202,6 +262,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     #             weights[idx] -= lr * (prob - y) * value
 
     # ------------------------------------------------------------
+    # 提交版本是优化过的代码
     # 优化写法（NumPy 稀疏向量化）：把每个样本的 (idx, value) 转成 numpy 数组
     # - score 用 np.dot 一次算完
     # - 更新用 weights[idxs] 一次性完成（高级索引）
@@ -262,8 +323,87 @@ def train_linear_model(args, train_exs: List[SentimentExample], dev_exs: List[Se
         raise Exception("Pass in UNIGRAM, BIGRAM, or BETTER to run the appropriate system")
 
     # Train the model
-    model = train_logistic_regression(train_exs, feat_extractor)
+    model = train_logistic_regression(args, train_exs, feat_extractor)
     return model
+
+class DANNetwork(nn.Module):
+    """
+    Deep Averaging Network: 平均词向量 -> MLP -> log-prob over {0,1}
+    """
+    def __init__(self, embedding_layer: nn.Embedding, emb_dim: int, hidden_size: int, dropout: float = 0.2):
+        super().__init__()
+        self.embedding = embedding_layer
+        self.ff = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(emb_dim, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, 2),
+        )
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, word_indices: torch.LongTensor) -> torch.Tensor:
+        """
+        word_indices: shape [n_tokens]
+        returns: log_probs shape [2]
+        """
+        if word_indices.numel() == 0:
+            # 极端情况：空句子就用 0 向量
+            emb_dim = self.embedding.weight.shape[1]
+            avg = torch.zeros(emb_dim, dtype=torch.float32, device=self.embedding.weight.device)
+        else:
+            embs = self.embedding(word_indices)          # [n_tokens, emb_dim]
+            avg = embs.mean(dim=0)                       # [emb_dim]
+        logits = self.ff(avg)                            # [2]
+        return self.log_softmax(logits)                  # [2]
+
+
+class TextCNNNetwork(nn.Module):
+    """
+    Simple TextCNN: embeddings -> 1D conv over time -> global max pooling -> MLP -> log-prob over {0,1}
+    """
+    def __init__(self, embedding_layer: nn.Embedding, emb_dim: int, num_filters: int = 64, dropout: float = 0.3):
+        super().__init__()
+        self.embedding = embedding_layer
+        self.kernel_sizes = [3, 4, 5]
+        self.convs = nn.ModuleList(
+            [nn.Conv1d(in_channels=emb_dim, out_channels=num_filters, kernel_size=k) for k in self.kernel_sizes]
+        )
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(num_filters * len(self.kernel_sizes), 2)
+        )
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, word_indices: torch.LongTensor) -> torch.Tensor:
+        if word_indices.numel() == 0:
+            # Empty input fallback
+            logits = self.classifier(torch.zeros(self.convs[0].out_channels * len(self.kernel_sizes), dtype=torch.float32))
+            return self.log_softmax(logits)
+
+        embs = self.embedding(word_indices)              # [seq_len, emb_dim]
+        x = embs.transpose(0, 1).unsqueeze(0)            # [1, emb_dim, seq_len]
+
+        pooled = []
+        seq_len = x.shape[-1]
+        for conv, k in zip(self.convs, self.kernel_sizes):
+            # If sentence is shorter than kernel size, pad on the right so conv is still valid
+            conv_in = x if seq_len >= k else F.pad(x, (0, k - seq_len))
+            h = F.relu(conv(conv_in))                    # [1, num_filters, T]
+            p = torch.max(h, dim=2).values               # [1, num_filters]
+            pooled.append(p)
+        features = torch.cat(pooled, dim=1).squeeze(0)  # [num_filters * num_kernels]
+        logits = self.classifier(features)               # [2]
+        return self.log_softmax(logits)                  # [2]
+
+
+def _words_to_indices(words: List[str], word_embeddings: WordEmbeddings) -> torch.LongTensor:
+    unk_idx = word_embeddings.word_indexer.index_of("UNK")
+    idxs = []
+    for w in words:
+        wi = word_embeddings.word_indexer.index_of(w)
+        idxs.append(wi if wi != -1 else unk_idx)
+    return torch.tensor(idxs, dtype=torch.long)
 
 
 class NeuralSentimentClassifier(SentimentClassifier):
@@ -271,8 +411,19 @@ class NeuralSentimentClassifier(SentimentClassifier):
     Implement your NeuralSentimentClassifier here. This should wrap an instance of the network with learned weights
     along with everything needed to run it on new data (word embeddings, etc.)
     """
-    def __init__(self, network, word_embeddings):
-        raise NotImplementedError
+    def __init__(self, network: nn.Module, word_embeddings: WordEmbeddings):
+        self.network = network
+        self.word_embeddings = word_embeddings
+
+
+
+    def predict(self, ex_words: List[str]) -> int:
+        self.network.eval()
+        with torch.no_grad():
+            idxs = _words_to_indices(ex_words, self.word_embeddings)
+            log_probs = self.network(idxs)
+            pred = int(torch.argmax(log_probs).item())
+            return pred
 
 
 def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample], word_embeddings: WordEmbeddings) -> NeuralSentimentClassifier:
@@ -284,4 +435,82 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     :param word_embeddings: set of loaded word embeddings
     :return: A trained NeuralSentimentClassifier model
     """
-    raise NotImplementedError
+    # 1) Embedding layer（默认用 pretrained + 冻结；更快、更稳）
+    emb_layer = word_embeddings.get_initialized_embedding_layer(frozen=True)
+    emb_dim = word_embeddings.get_embedding_length()
+
+    # 2) Network / Loss / Optimizer
+    network = DANNetwork(
+        embedding_layer=emb_layer,
+        emb_dim=emb_dim,
+        hidden_size=args.hidden_size,
+        dropout=0.2
+    )
+
+    loss_fn = nn.NLLLoss()
+    optimizer = optim.Adam(network.parameters(), lr=args.lr)
+
+    # 3) 训练循环（batch_size=1）
+    for epoch in range(args.num_epochs):
+        network.train()
+        random.shuffle(train_exs)
+
+        total_loss = 0.0
+        for ex in train_exs:
+            idxs = _words_to_indices(ex.words, word_embeddings)
+            gold = torch.tensor([ex.label], dtype=torch.long)  # shape [1]
+
+            optimizer.zero_grad()
+            log_probs = network(idxs).unsqueeze(0)             # shape [1, 2]
+            loss = loss_fn(log_probs, gold)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += float(loss.item())
+
+        # 可选：每个 epoch 打印一下 loss（以及 dev acc）
+        # 用框架的 evaluate 会调用 predict_all -> predict，比较慢但简单；先跑通为主
+        avg_loss = total_loss / max(1, len(train_exs))
+        print(f"[DAN] epoch {epoch+1}/{args.num_epochs}  avg_train_loss={avg_loss:.4f}")
+
+    return NeuralSentimentClassifier(network, word_embeddings)
+
+
+def train_text_cnn(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample], word_embeddings: WordEmbeddings) -> NeuralSentimentClassifier:
+    """
+    Additional architecture for Part 2 exploration: simple TextCNN.
+    """
+    emb_layer = word_embeddings.get_initialized_embedding_layer(frozen=True)
+    emb_dim = word_embeddings.get_embedding_length()
+
+    # Reuse hidden_size as number of filters per kernel for convenience.
+    network = TextCNNNetwork(
+        embedding_layer=emb_layer,
+        emb_dim=emb_dim,
+        num_filters=args.hidden_size,
+        dropout=0.3
+    )
+
+    loss_fn = nn.NLLLoss()
+    optimizer = optim.Adam(network.parameters(), lr=args.lr)
+
+    for epoch in range(args.num_epochs):
+        network.train()
+        random.shuffle(train_exs)
+        total_loss = 0.0
+
+        for ex in train_exs:
+            idxs = _words_to_indices(ex.words, word_embeddings)
+            gold = torch.tensor([ex.label], dtype=torch.long)
+
+            optimizer.zero_grad()
+            log_probs = network(idxs).unsqueeze(0)      # [1, 2]
+            loss = loss_fn(log_probs, gold)
+            loss.backward()
+            optimizer.step()
+            total_loss += float(loss.item())
+
+        avg_loss = total_loss / max(1, len(train_exs))
+        print(f"[CNN] epoch {epoch+1}/{args.num_epochs}  avg_train_loss={avg_loss:.4f}")
+
+    return NeuralSentimentClassifier(network, word_embeddings)
