@@ -7,6 +7,7 @@ from torch import optim
 import numpy as np
 import random
 import sys
+import string
 from typing import List
 from sentiment_data import *
 from utils import *
@@ -76,6 +77,7 @@ class UnigramFeatureExtractor(FeatureExtractor):
     def __init__(self, indexer: Indexer):
         # raise Exception("Must be implemented")
         self.indexer = indexer
+        self._punct_table = str.maketrans("", "", string.punctuation)
     
     def get_indexer(self) -> Indexer:
         return self.indexer
@@ -87,7 +89,10 @@ class UnigramFeatureExtractor(FeatureExtractor):
         if bias_idx != -1:
             feats[bias_idx] += 1
         for word in sentence:
-            idx = self.indexer.add_and_get_index(word, add_to_indexer)
+            norm = word.lower().translate(self._punct_table).strip()
+            if not norm:
+                continue
+            idx = self.indexer.add_and_get_index(norm, add_to_indexer)
             if idx != -1:
                 feats[idx] += 1
         return feats
@@ -223,7 +228,7 @@ def train_logistic_regression(args, train_exs: List[SentimentExample], feat_extr
     # raise Exception("Must be implemented")
     
     lr_passed = any(arg == "--lr" or arg.startswith("--lr=") for arg in sys.argv[1:])
-    lr = args.lr if lr_passed else 0.1
+    lr = args.lr if lr_passed else 0.05
     num_epochs = args.num_epochs
 
     # 先构建特征空间
